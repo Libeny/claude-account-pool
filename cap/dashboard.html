@@ -141,6 +141,13 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text-p
 .confirm-box { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 24px; width: 380px; text-align: center; animation: fadeUp .15s ease; }
 .confirm-box p { font-size: 14px; margin-bottom: 20px; color: var(--text-primary); }
 .confirm-box .confirm-actions { display: flex; gap: 8px; justify-content: center; }
+
+/* Toast notification */
+.toast { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); padding: 12px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; box-shadow: var(--shadow-lg); z-index: 200; animation: toastIn .25s ease; max-width: 460px; }
+.toast.toast-warn { background: var(--warning-bg); border: 1px solid var(--warning-border); color: var(--warning); }
+.toast.toast-error { background: var(--danger-bg); border: 1px solid var(--danger-border); color: var(--danger); }
+.toast.toast-success { background: var(--success-bg); border: 1px solid var(--success-border); color: var(--success); }
+@keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(-10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 </style>
 </head>
 <body>
@@ -221,12 +228,20 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text-p
 </div>
 
 <div id="confirm-container"></div>
+<div id="toast-container"></div>
 
 <script>
 const API = '';
 let autoSwitch = true;
 
 const ALERT_LABELS = { all_exhausted: '全部耗尽', refresh_failed: '刷新失败', usage_warning: '用量预警', auto_switch: '自动切换' };
+
+function showToast(msg, type = 'warn', duration = 4000) {
+  const el = document.getElementById('toast-container');
+  const id = 'toast-' + Date.now();
+  el.innerHTML = `<div id="${id}" class="toast toast-${type}">${msg}</div>`;
+  setTimeout(() => { const t = document.getElementById(id); if (t) t.remove(); }, duration);
+}
 
 function usageColor(pct) { return pct >= 90 ? 'red' : pct >= 80 ? 'yellow' : 'green'; }
 function fmtReset(iso) {
@@ -439,6 +454,10 @@ async function startLogin() {
       document.getElementById('add-result').innerHTML = '账号「'+name+'」添加成功！';
       document.getElementById('add-result').style.color = 'var(--success)';
       refreshData();
+    } else if (s.status === 'duplicate') {
+      clearInterval(loginPoll);
+      hideAddModal();
+      showToast(s.error || '该邮箱已存在，无需重复添加', 'warn', 5000);
     } else if (s.status === 'failed') {
       clearInterval(loginPoll);
       statusEl.textContent = '登录失败: ' + (s.error || '未知错误');

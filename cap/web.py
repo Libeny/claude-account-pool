@@ -26,7 +26,7 @@ from typing import Optional
 
 from cap.pool import AccountPool
 from cap.switcher import switch_to, get_active_account
-from cap.credentials import read_credentials
+from cap.credentials import read_credentials, read_keychain
 from cap.account_meta import extract_meta_from_claude_json, email_to_dirname, write_meta, read_meta
 from cap.types import AccountMeta
 
@@ -155,9 +155,27 @@ def _start_login(name: str, pool_dir: str) -> dict:
 
         proc.wait()
 
-        # 检查临时目录中是否生成了凭证
+        # 检查凭证来源：文件 > Keychain（本机浏览器模式写 Keychain 不写文件）
         cred_file = tmp_dir / ".credentials.json"
+        creds_data = None
+
         if cred_file.exists():
+            creds_data = cred_file.read_text()
+            logger.info("🔐 登录[%s]: 从文件读取凭证", name)
+        elif any("login successful" in l.lower() for l in output_lines):
+            # 本机浏览器模式：credentials 可能写入了 Keychain
+            kc = read_keychain()
+            if kc:
+                import json as _json
+                creds_data = _json.dumps({"claudeAiOauth": {
+                    "accessToken": kc.access_token,
+                    "refreshToken": kc.refresh_token,
+                    "expiresAt": kc.expires_at,
+                    "scopes": kc.scopes,
+                }}, indent=2)
+                logger.info("🔐 登录[%s]: 从 Keychain 读取凭证（本机浏览器模式）", name)
+
+        if creds_data:
             # 提取 meta
             claude_json = tmp_dir / ".claude.json"
             if claude_json.exists():
@@ -172,25 +190,24 @@ def _start_login(name: str, pool_dir: str) -> dict:
                         continue
                     existing_meta = read_meta(str(existing_dir))
                     if existing_meta.email == meta.email:
-                        session["status"] = "failed"
-                        session["error"] = f"邮箱 {meta.email} 已在账号「{existing_dir.name}」中存在"
+                        session["status"] = "duplicate"
+                        session["error"] = f"邮箱 {meta.email} 已在账号「{existing_dir.name}」中存在，无需重复添加"
                         shutil.rmtree(str(tmp_dir), ignore_errors=True)
                         logger.warning("🔐 登录[%s]: 邮箱重复 %s (已存在于 %s)", name, meta.email, existing_dir.name)
                         return
 
-            # 登录成功 → 从临时目录移到正式位置
+            # 登录成功 → 写入正式位置
             acct_dir.mkdir(parents=True, exist_ok=True)
-            cred_file.rename(acct_dir / "creds.json")
-            os.chmod(str(acct_dir / "creds.json"), 0o600)
+            creds_path = acct_dir / "creds.json"
+            creds_path.write_text(creds_data)
+            os.chmod(str(creds_path), 0o600)
             write_meta(str(acct_dir), meta)
 
-            # 清理临时目录
             shutil.rmtree(str(tmp_dir), ignore_errors=True)
 
             session["status"] = "success"
             logger.info("🎉 登录[%s]: 成功 (%s)", name, meta.email)
         else:
-            # 登录失败 → 清理临时目录，不留痕迹
             session["status"] = "failed"
             session["error"] = "\n".join(output_lines[-5:]) or "登录未完成"
             shutil.rmtree(str(tmp_dir), ignore_errors=True)
