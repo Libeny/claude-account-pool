@@ -63,7 +63,8 @@ class AccountPool:
     def init(self) -> None:
         self._bootstrap_local()
         self._scan()
-        logger.info("loaded %d accounts: %s", len(self._accounts), [a.name for a in self._accounts])
+        names = ", ".join(a.name for a in self._accounts) or "无"
+        logger.info("📦 已加载 %d 个账号: %s", len(self._accounts), names)
         self.check_all()
 
     def _bootstrap_local(self) -> None:
@@ -116,8 +117,8 @@ class AccountPool:
         if not creds:
             creds = read_keychain()
         if not creds:
-            logger.info("bootstrap: no local credentials found, skipping")
-            acct_dir.rmdir()  # 清理空目录
+            logger.info("⏭️ 未发现本地凭证，跳过自动导入")
+            acct_dir.rmdir()
             return
 
         # 写 creds.json 到账号目录
@@ -131,12 +132,12 @@ class AccountPool:
             CRED_LINK.unlink()
         CRED_LINK.symlink_to((acct_dir / "creds.json").resolve())
 
-        # macOS: 保持 Keychain 一致（内容没变，只是确认一致性）
+        # macOS: 保持 Keychain 一致
         creds = read_credentials(str(acct_dir))
         if creds:
             sync_active_to_keychain(creds)
 
-        logger.info("bootstrap: imported local account as '%s' (%s)", dir_name, meta.email)
+        logger.info("🎉 自动导入本地账号「%s」(%s)", dir_name, meta.email or "未知邮箱")
 
     def check_all(self) -> None:
         self._scan()
@@ -207,39 +208,37 @@ class AccountPool:
         creds = read_credentials(acct.config_dir)
         if not creds:
             acct.status = AccountStatus.NEEDS_LOGIN
-            logger.warning("%s: no credentials", acct.name)
+            logger.warning("🔴 %s: 未找到凭证", acct.name)
             return
 
         acct.token_expires_at = creds.expires_at
 
-        # Token refresh: if within 1 hour of expiry
+        # Token 续期: 距过期不足 1 小时时刷新
         time_to_expiry_s = (creds.expires_at - time.time() * 1000) / 1000
         if time_to_expiry_s < REFRESH_THRESHOLD_S:
-            logger.info("%s: token expires in %dm, refreshing...", acct.name, int(time_to_expiry_s / 60))
+            logger.info("🔄 %s: Token 还剩 %d 分钟，正在刷新...", acct.name, int(time_to_expiry_s / 60))
             result = refresh_token(creds)
             if isinstance(result, RefreshOk):
                 write_credentials(acct.config_dir, result.credentials)
-                # If this is the active account on macOS, sync to Keychain too
                 active_name = get_active_account(self.accounts_dir)
                 if acct.name == active_name:
                     sync_active_to_keychain(result.credentials)
                 acct.token_expires_at = result.credentials.expires_at
                 acct.last_refresh_at = time.time()
-                logger.info("%s: refreshed, new expiry %s", acct.name, time.strftime("%Y-%m-%d %H:%M", time.gmtime(acct.token_expires_at / 1000)))
+                logger.info("✅ %s: Token 已续期，新过期时间 %s UTC", acct.name, time.strftime("%Y-%m-%d %H:%M", time.gmtime(acct.token_expires_at / 1000)))
                 creds = result.credentials
             else:
                 acct.status = AccountStatus.NEEDS_LOGIN
                 self.on_alert("refresh_failed", acct)
-                logger.error("%s: refresh failed — %s", acct.name, result.error)
+                logger.error("❌ %s: Token 刷新失败 — %s", acct.name, result.error)
                 return
 
-        # Fetch usage
+        # 拉取用量
         usage = fetch_usage(creds.access_token)
         if usage:
             acct.previous_usage = acct.usage
             acct.usage = usage
 
-            # Warning at 80%
             eff = _effective_load(usage)
             if THRESHOLD_WARN <= eff < THRESHOLD_SWITCH:
                 self.on_alert("usage_warning", acct)
@@ -272,19 +271,27 @@ class AccountPool:
         parts = []
         for a in self._accounts:
             u = a.usage
+            icon = {"active": "🟢", "needs_login": "🔴", "disabled": "⚫"}.get(a.status.value, "⚪")
             if u:
                 parts.append(
-                    f"{a.name}[{a.status.value}] "
+                    f"{icon} {a.name} "
                     f"5h:{u.five_hour.utilization}% "
                     f"7d:{u.seven_day.utilization}% "
                     f"S7d:{u.seven_day_sonnet.utilization}%"
                 )
             else:
-                parts.append(f"{a.name}[{a.status.value}] no-usage")
-        logger.info("check: %s", " | ".join(parts))
+                parts.append(f"{icon} {a.name} 暂无用量")
+        logger.info("📊 健康检查: %s", " │ ".join(parts))
 
     @staticmethod
     def _default_alert(event: str, acct: AccountState) -> None:
-        logger.warning("ALERT [%s] account=%s usage=%s", event, acct.name,
-                        f"5h:{acct.usage.five_hour.utilization}% S7d:{acct.usage.seven_day_sonnet.utilization}%"
-                        if acct.usage else "N/A")
+        icons = {
+            "all_exhausted": "🚨",
+            "refresh_failed": "❌",
+            "usage_warning": "⚠️",
+            "auto_switch": "🔄",
+        }
+        icon = icons.get(event, "⚠️")
+        usage_str = (f"5h:{acct.usage.five_hour.utilization}% S7d:{acct.usage.seven_day_sonnet.utilization}%"
+                     if acct.usage else "无数据")
+        logger.warning("%s [CAP 报警] %s — 账号: %s — 用量: %s", icon, event, acct.name, usage_str)

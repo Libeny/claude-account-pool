@@ -381,12 +381,16 @@ def start_server(pool_dir: str, host: str = "0.0.0.0", port: int = 8210) -> None
     t.start()
 
     server = HTTPServer((host, port), Handler)
-    print(f"CAP Web UI: http://{host}:{port}")
-    print(f"Accounts dir: {pool_dir}")
-    print(f"Daemon: checking every 20 min")
+    print()
+    print(f"  🎩 CAP 服务已启动！")
+    print(f"  ───────────────────────")
+    print(f"  🌐 面板地址:  http://{host}:{port}")
+    print(f"  📁 账号目录:  {pool_dir}")
+    print(f"  ⏱️ 自动检查:  每 20 分钟")
+    print()
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nshutting down.")
+        print("\n🛑 [CAP] 服务已停止")
         server.server_close()
