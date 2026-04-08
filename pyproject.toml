@@ -10,6 +10,9 @@ cap = "cap.cli:main"
 [tool.setuptools.packages.find]
 include = ["cap*"]
 
+[tool.setuptools.package-data]
+cap = ["*.html"]
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"

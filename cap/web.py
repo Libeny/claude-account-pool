@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import threading
 import time
@@ -104,13 +105,15 @@ def _start_login(name: str, pool_dir: str) -> dict:
       5. subprocess completes → credentials created
     """
     acct_dir = Path(pool_dir) / name
-    if acct_dir.exists():
+    if acct_dir.exists() and (acct_dir / "creds.json").exists():
         return {"status": "error", "error": f"账号「{name}」已存在"}
 
-    acct_dir.mkdir(parents=True)
+    # 用临时目录做登录，成功后才移到正式位置
+    import tempfile
+    tmp_dir = Path(tempfile.mkdtemp(prefix=f"cap-login-{name}-"))
 
     env = os.environ.copy()
-    env["CLAUDE_CONFIG_DIR"] = str(acct_dir)
+    env["CLAUDE_CONFIG_DIR"] = str(tmp_dir)
 
     claude_bin = os.environ.get("CLAUDE_EXECUTABLE", "claude")
 
@@ -128,7 +131,7 @@ def _start_login(name: str, pool_dir: str) -> dict:
         "url": None,
         "error": None,
         "process": proc,
-        "acct_dir": str(acct_dir),
+        "tmp_dir": str(tmp_dir),
     }
     _login_sessions[name] = session
 
@@ -137,9 +140,8 @@ def _start_login(name: str, pool_dir: str) -> dict:
         for line in proc.stdout:
             line = line.strip()
             output_lines.append(line)
-            logger.info("login[%s]: %s", name, line)
+            logger.info("🔐 登录[%s]: %s", name, line)
 
-            # Capture authorization URL
             if "http" in line.lower() and session["url"] is None:
                 for word in line.split():
                     if word.startswith("http"):
@@ -147,52 +149,52 @@ def _start_login(name: str, pool_dir: str) -> dict:
                         session["status"] = "waiting_for_code"
                         break
 
-            # Detect "Login successful" or similar success message
             lower = line.lower()
             if "login successful" in lower or "successfully" in lower:
                 session["status"] = "completing"
 
         proc.wait()
 
-        # Check if credentials were created
-        cred_file = acct_dir / ".credentials.json"
+        # 检查临时目录中是否生成了凭证
+        cred_file = tmp_dir / ".credentials.json"
         if cred_file.exists():
-            target = acct_dir / "creds.json"
-            cred_file.rename(target)
-            os.chmod(str(target), 0o600)
-
-            # Extract meta (email etc.)
-            claude_json = acct_dir / ".claude.json"
+            # 提取 meta
+            claude_json = tmp_dir / ".claude.json"
             if claude_json.exists():
                 meta = extract_meta_from_claude_json(claude_json)
             else:
                 meta = AccountMeta(display_name=name)
 
-            # Duplicate check: does this email already exist in the pool?
+            # 重复邮箱检测
             if meta.email:
                 for existing_dir in Path(pool_dir).iterdir():
-                    if not existing_dir.is_dir() or existing_dir.name == name:
+                    if not existing_dir.is_dir() or existing_dir.name.startswith("."):
                         continue
                     existing_meta = read_meta(str(existing_dir))
                     if existing_meta.email == meta.email:
                         session["status"] = "failed"
                         session["error"] = f"邮箱 {meta.email} 已在账号「{existing_dir.name}」中存在"
-                        # Clean up duplicate
-                        import shutil
-                        shutil.rmtree(str(acct_dir), ignore_errors=True)
-                        logger.warning("login[%s]: duplicate email %s (exists in %s)", name, meta.email, existing_dir.name)
+                        shutil.rmtree(str(tmp_dir), ignore_errors=True)
+                        logger.warning("🔐 登录[%s]: 邮箱重复 %s (已存在于 %s)", name, meta.email, existing_dir.name)
                         return
 
+            # 登录成功 → 从临时目录移到正式位置
+            acct_dir.mkdir(parents=True, exist_ok=True)
+            cred_file.rename(acct_dir / "creds.json")
+            os.chmod(str(acct_dir / "creds.json"), 0o600)
             write_meta(str(acct_dir), meta)
+
+            # 清理临时目录
+            shutil.rmtree(str(tmp_dir), ignore_errors=True)
+
             session["status"] = "success"
-            logger.info("login[%s]: success (%s)", name, meta.email)
+            logger.info("🎉 登录[%s]: 成功 (%s)", name, meta.email)
         else:
+            # 登录失败 → 清理临时目录，不留痕迹
             session["status"] = "failed"
             session["error"] = "\n".join(output_lines[-5:]) or "登录未完成"
-            # Clean up: remove empty account directory on failure
-            import shutil
-            shutil.rmtree(str(acct_dir), ignore_errors=True)
-            logger.error("login[%s]: failed, cleaned up — %s", name, session["error"])
+            shutil.rmtree(str(tmp_dir), ignore_errors=True)
+            logger.error("❌ 登录[%s]: 失败已清理 — %s", name, session["error"])
 
     t = threading.Thread(target=_watch, daemon=True)
     t.start()
@@ -305,6 +307,7 @@ class Handler(BaseHTTPRequestHandler):
             name = body.get("name", "")
             try:
                 switch_to(_pool_dir, name)
+                _pool.check_all()  # 刷新池状态
                 self._json_response({"ok": True, "switched_to": name})
             except FileNotFoundError as e:
                 self._json_response({"ok": False, "error": str(e)}, 400)
@@ -348,8 +351,8 @@ class Handler(BaseHTTPRequestHandler):
                 link = Path.home() / ".claude" / ".credentials.json"
                 if link.is_symlink():
                     link.unlink()
-            import shutil
             shutil.rmtree(str(target), ignore_errors=True)
+            _pool.check_all()  # 刷新池状态
             self._json_response({"ok": True, "removed": name})
 
         elif self.path == "/api/check":
