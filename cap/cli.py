@@ -163,7 +163,7 @@ def _daemonize(args: argparse.Namespace) -> None:
     log_file = os.path.expanduser("~/.cap/cap.log")
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-    cmd = ["cap", "serve", "--foreground", "--host", args.host, "--port", str(args.port), "--pool-dir", args.pool_dir]
+    cmd = ["cap", "--pool-dir", args.pool_dir, "serve", "--foreground", "--host", args.host, "--port", str(args.port)]
     with open(log_file, "a") as f:
         proc = subprocess.Popen(
             cmd,
