@@ -381,10 +381,22 @@ def start_server(pool_dir: str, host: str = "0.0.0.0", port: int = 8210) -> None
     t.start()
 
     server = HTTPServer((host, port), Handler)
+
+    display_host = host
+    if display_host == "0.0.0.0":
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            display_host = s.getsockname()[0]
+            s.close()
+        except Exception:
+            display_host = "127.0.0.1"
+
     print()
     print(f"  🎩 CAP 服务已启动！")
     print(f"  ───────────────────────")
-    print(f"  🌐 面板地址:  http://{host}:{port}")
+    print(f"  🌐 面板地址:  http://{display_host}:{port}")
     print(f"  📁 账号目录:  {pool_dir}")
     print(f"  ⏱️ 自动检查:  每 20 分钟")
     print()

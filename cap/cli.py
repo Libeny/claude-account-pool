@@ -176,12 +176,24 @@ def _daemonize(args: argparse.Namespace) -> None:
     with open(pid_file, "w") as f:
         f.write(str(proc.pid))
 
+    # 获取本机 IP 用于显示
+    display_host = args.host
+    if display_host == "0.0.0.0":
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            display_host = s.getsockname()[0]
+            s.close()
+        except Exception:
+            display_host = "127.0.0.1"
+
     print()
-    print(f"🎩 [CAP] 守护进程已启动！")
-    print(f"   🌐 面板地址:  http://{args.host}:{args.port}")
-    print(f"   📋 日志文件:  {log_file}")
-    print(f"   🔢 进程 PID:  {proc.pid}")
-    print(f"   🛑 停止命令:  cap stop")
+    print(f"  🎩 [CAP] 守护进程已启动！")
+    print(f"     🌐 面板地址:  http://{display_host}:{args.port}")
+    print(f"     📋 日志文件:  {log_file}")
+    print(f"     🔢 进程 PID:  {proc.pid}")
+    print(f"     🛑 停止命令:  cap stop")
     print()
 
 
