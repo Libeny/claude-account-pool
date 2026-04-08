@@ -364,14 +364,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._json_response({"ok": False, "error": f"账号「{name}」不存在"}, 404)
                 return
             meta = read_meta(str(target))
-            if display_name:
-                meta.display_name = display_name
+            meta.display_name = display_name
             write_meta(str(target), meta)
-            # Update in-memory state
-            for a in _pool.list():
+            # Update in-memory state directly on the internal list
+            for a in _pool._accounts:
                 if a.name == name:
-                    a.meta.display_name = display_name
-            self._json_response({"ok": True})
+                    a.meta = meta
+            self._json_response({"ok": True, "display_name": display_name})
 
         elif self.path == "/api/check":
             _pool.check_all()
