@@ -145,8 +145,55 @@ def cmd_active(args: argparse.Namespace) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
+    if args.daemon:
+        _daemonize(args)
+        return
     from cap.web import start_server
     start_server(args.pool_dir, host=args.host, port=args.port)
+
+
+def _daemonize(args: argparse.Namespace) -> None:
+    """Fork to background, redirect output to log file."""
+    import subprocess
+    log_file = os.path.expanduser("~/.cap/cap.log")
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+
+    cmd = ["cap", "serve", "--host", args.host, "--port", str(args.port), "--pool-dir", args.pool_dir]
+    with open(log_file, "a") as f:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    # Write PID for later stop
+    pid_file = os.path.expanduser("~/.cap/cap.pid")
+    with open(pid_file, "w") as f:
+        f.write(str(proc.pid))
+
+    print(f"CAP daemon started (PID {proc.pid})")
+    print(f"  Web UI: http://{args.host}:{args.port}")
+    print(f"  Log:    {log_file}")
+    print(f"  Stop:   cap stop")
+
+
+def cmd_stop(args: argparse.Namespace) -> None:
+    import signal
+    pid_file = os.path.expanduser("~/.cap/cap.pid")
+    if not os.path.exists(pid_file):
+        print("no daemon running (pid file not found)")
+        return
+    try:
+        pid = int(open(pid_file).read().strip())
+        os.kill(pid, signal.SIGTERM)
+        os.unlink(pid_file)
+        print(f"CAP daemon stopped (PID {pid})")
+    except ProcessLookupError:
+        os.unlink(pid_file)
+        print("daemon was not running, cleaned up pid file")
+    except Exception as e:
+        print(f"stop failed: {e}")
 
 
 def main() -> None:
@@ -174,6 +221,9 @@ def main() -> None:
     p_serve = sub.add_parser("serve", help="start web UI + daemon")
     p_serve.add_argument("--host", default="0.0.0.0")
     p_serve.add_argument("--port", type=int, default=8210)
+    p_serve.add_argument("-d", "--daemon", action="store_true", help="run in background")
+
+    sub.add_parser("stop", help="stop background daemon")
 
     args = parser.parse_args()
 
@@ -190,6 +240,7 @@ def main() -> None:
         "pick": cmd_pick,
         "switch": cmd_switch,
         "serve": cmd_serve,
+        "stop": cmd_stop,
     }
     handlers[args.command](args)
 

@@ -96,15 +96,28 @@ class AccountPool:
         acct_dir = pool_path / dir_name
         acct_dir.mkdir(parents=True, exist_ok=True)
 
-        # 读凭证: 优先文件，macOS fallback 到 Keychain
+        # 读凭证: 直接读 ~/.claude/.credentials.json（原始文件名），macOS fallback 到 Keychain
         from cap.types import CredentialsFile
+        import json
         creds: CredentialsFile | None = None
         if CRED_LINK.exists():
-            creds = read_credentials(str(CLAUDE_HOME))
+            try:
+                raw = json.loads(CRED_LINK.read_text())
+                oauth = raw.get("claudeAiOauth", {})
+                if oauth.get("accessToken") and oauth.get("refreshToken"):
+                    creds = CredentialsFile(
+                        access_token=oauth["accessToken"],
+                        refresh_token=oauth["refreshToken"],
+                        expires_at=int(oauth.get("expiresAt", 0)),
+                        scopes=oauth.get("scopes", []),
+                    )
+            except Exception:
+                pass
         if not creds:
             creds = read_keychain()
         if not creds:
             logger.info("bootstrap: no local credentials found, skipping")
+            acct_dir.rmdir()  # 清理空目录
             return
 
         # 写 creds.json 到账号目录
