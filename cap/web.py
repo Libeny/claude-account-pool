@@ -355,6 +355,24 @@ class Handler(BaseHTTPRequestHandler):
             _pool.check_all()  # 刷新池状态
             self._json_response({"ok": True, "removed": name})
 
+        elif self.path == "/api/edit":
+            body = self._read_body()
+            name = body.get("name", "")
+            display_name = body.get("display_name", "").strip()
+            target = Path(_pool_dir) / name
+            if not target.exists():
+                self._json_response({"ok": False, "error": f"账号「{name}」不存在"}, 404)
+                return
+            meta = read_meta(str(target))
+            if display_name:
+                meta.display_name = display_name
+            write_meta(str(target), meta)
+            # Update in-memory state
+            for a in _pool.list():
+                if a.name == name:
+                    a.meta.display_name = display_name
+            self._json_response({"ok": True})
+
         elif self.path == "/api/check":
             _pool.check_all()
             if _auto_switch:
