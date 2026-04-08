@@ -17,6 +17,7 @@ Response:
 from __future__ import annotations
 
 import json
+import ssl
 import time
 import urllib.request
 import urllib.error
@@ -35,8 +36,11 @@ def fetch_usage(access_token: str) -> Optional[UsageSnapshot]:
             "anthropic-beta": "oauth-2025-04-20",
         },
     )
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as resp:
             raw = json.loads(resp.read().decode())
     except Exception:
         return None

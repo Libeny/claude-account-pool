@@ -13,11 +13,17 @@ GET  /api/alerts        → 报警日志
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
+import pty
+import re
+import select
 import shutil
+import struct
 import subprocess
+import termios
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -94,145 +100,303 @@ def _try_auto_switch() -> None:
         logger.error("auto-switch failed: %s", e)
 
 
+def _clean_ansi(s: str) -> str:
+    """去除 ANSI 转义码."""
+    return re.sub(r'\x1b\[[^a-zA-Z]*[a-zA-Z]|\x1b\].*?\x07|\x1b[^[\]].|\r', '', s)
+
+
+def _pty_read(master_fd: int, timeout: float = 5, until: str = None) -> str:
+    """从 PTY master fd 读取输出.
+
+    如果指定 until，检测到该关键词后等 0.5s 收尾数据就返回，不等满 timeout.
+    """
+    buf = ''
+    t0 = time.time()
+    found_target = False
+    while time.time() - t0 < timeout:
+        ready, _, _ = select.select([master_fd], [], [], 0.3)
+        if ready:
+            try:
+                data = os.read(master_fd, 16384).decode('utf-8', errors='replace')
+                buf += data
+                if until and until.lower() in _clean_ansi(buf).lower():
+                    if not found_target:
+                        found_target = True
+                        # 再读 0.5s 收尾数据
+                        t0 = time.time() - timeout + 0.5
+            except OSError:
+                break
+    return buf
+
+
 def _start_login(name: str, pool_dir: str) -> dict:
-    """Start claude auth login in a subprocess, capture the login URL.
+    """通过 PTY 模拟 claude 交互模式的 /login 流程.
 
     Flow:
-      1. spawn `claude auth login` with stdin=PIPE
-      2. background thread reads stdout, captures the authorization URL
-      3. frontend shows URL → user opens in browser → gets authorization code
-      4. user pastes code into frontend → POST /api/add/code → writes to stdin
-      5. subprocess completes → credentials created
+      1. 用 PTY 启动 claude 交互模式
+      2. 发送 /login 命令 → Enter 选择 Claude account
+      3. 捕获授权 URL，前端展示给用户
+      4. 用户授权后拿到 code → POST /api/add/code → 通过 PTY 写入
+      5. 登录完成，提取凭证
     """
-    acct_dir = Path(pool_dir) / name
-    if acct_dir.exists() and (acct_dir / "creds.json").exists():
-        return {"status": "error", "error": f"账号「{name}」已存在"}
+    # 重复检查会在登录成功后根据邮箱判断，这里仅检查是否有同名会话在进行中
+    if name in _login_sessions and _login_sessions[name].get("status") in ("waiting", "waiting_for_code"):
+        return {"status": "error", "error": f"账号「{name}」正在登录中"}
 
-    # 用临时目录做登录，成功后才移到正式位置
     import tempfile
     tmp_dir = Path(tempfile.mkdtemp(prefix=f"cap-login-{name}-"))
 
     env = os.environ.copy()
     env["CLAUDE_CONFIG_DIR"] = str(tmp_dir)
 
+    # 写入基础配置，跳过首次启动向导
+    claude_json = {
+        "firstStartTime": "2020-01-01T00:00:00Z",
+        "opusProMigrationComplete": True,
+        "sonnet1m45MigrationComplete": True,
+        "migrationVersion": 11,
+        "userID": "cap-login",
+        "theme": "dark",
+        "hasCompletedOnboarding": True,
+    }
+    with open(str(tmp_dir / ".claude.json"), "w") as f:
+        json.dump(claude_json, f)
+
+    # 复制 settings 文件（如果存在）
+    claude_home = Path.home() / ".claude"
+    for sf in ["settings.json", "settings.local.json"]:
+        src = claude_home / sf
+        if src.exists():
+            shutil.copy2(str(src), str(tmp_dir / sf))
+
     claude_bin = os.environ.get("CLAUDE_EXECUTABLE", "claude")
 
-    proc = subprocess.Popen(
-        [claude_bin, "auth", "login"],
-        env=env,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    # 创建 PTY
+    master_fd, slave_fd = pty.openpty()
+    # 设置超宽终端，避免 URL 被截断
+    winsize = struct.pack('HHHH', 50, 1000, 0, 0)
+    fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
+
+    child_pid = os.fork()
+    if child_pid == 0:
+        # 子进程
+        os.close(master_fd)
+        os.setsid()
+        os.dup2(slave_fd, 0)
+        os.dup2(slave_fd, 1)
+        os.dup2(slave_fd, 2)
+        os.close(slave_fd)
+        os.execvpe(claude_bin, [claude_bin], env)
+
+    os.close(slave_fd)
 
     session = {
         "status": "waiting",
         "url": None,
         "error": None,
-        "process": proc,
+        "master_fd": master_fd,
+        "child_pid": child_pid,
         "tmp_dir": str(tmp_dir),
     }
     _login_sessions[name] = session
 
-    def _watch():
-        output_lines = []
-        for line in proc.stdout:
-            line = line.strip()
-            output_lines.append(line)
-            logger.info("🔐 登录[%s]: %s", name, line)
+    def _drive_login():
+        try:
+            # 1. 等待 claude 启动
+            logger.info("🔐 登录[%s]: 等待 claude 启动...", name)
+            raw = _pty_read(master_fd, timeout=15, until='trust')
+            clean = _clean_ansi(raw)
 
-            if "http" in line.lower() and session["url"] is None:
-                for word in line.split():
-                    if word.startswith("http"):
-                        session["url"] = word
-                        session["status"] = "waiting_for_code"
-                        break
+            # 如果出现 trust 提示，自动确认
+            if 'trust' in clean.lower():
+                os.write(master_fd, b'\r')
+                _pty_read(master_fd, timeout=5, until='welcome')
+                logger.info("🔐 登录[%s]: 已确认 trust", name)
 
-            lower = line.lower()
-            if "login successful" in lower or "successfully" in lower:
-                session["status"] = "completing"
+            # 2. 发送 /login
+            time.sleep(0.3)
+            os.write(master_fd, b'/login\r')
+            raw = _pty_read(master_fd, timeout=10, until='select login')
+            clean = _clean_ansi(raw)
+            logger.info("🔐 登录[%s]: /login 菜单已加载", name)
 
-        proc.wait()
+            # 3. Enter 选择默认选项（Claude account）
+            os.write(master_fd, b'\r')
+            raw = _pty_read(master_fd, timeout=15, until='code_challenge')
+            clean = _clean_ansi(raw)
 
-        # 检查凭证来源：文件 > Keychain（本机浏览器模式写 Keychain 不写文件）
-        cred_file = tmp_dir / ".credentials.json"
-        creds_data = None
-
-        if cred_file.exists():
-            creds_data = cred_file.read_text()
-            logger.info("🔐 登录[%s]: 从文件读取凭证", name)
-        elif any("login successful" in l.lower() for l in output_lines):
-            # 本机浏览器模式：credentials 可能写入了 Keychain
-            kc = read_keychain()
-            if kc:
-                import json as _json
-                creds_data = _json.dumps({"claudeAiOauth": {
-                    "accessToken": kc.access_token,
-                    "refreshToken": kc.refresh_token,
-                    "expiresAt": kc.expires_at,
-                    "scopes": kc.scopes,
-                }}, indent=2)
-                logger.info("🔐 登录[%s]: 从 Keychain 读取凭证（本机浏览器模式）", name)
-
-        if creds_data:
-            # 提取 meta
-            claude_json = tmp_dir / ".claude.json"
-            if claude_json.exists():
-                meta = extract_meta_from_claude_json(claude_json)
+            # 4. 提取 URL
+            url_match = re.search(
+                r'(https://claude\.com/cai/oauth/authorize\S+)',
+                clean
+            )
+            if url_match:
+                session["url"] = url_match.group(1).rstrip('.')
+                session["status"] = "waiting_for_code"
+                logger.info("🔐 登录[%s]: 获取到授权 URL", name)
             else:
-                meta = AccountMeta(display_name=name)
+                session["status"] = "failed"
+                session["error"] = "未能获取授权 URL"
+                logger.error("❌ 登录[%s]: 未找到 URL，输出: %s", name, clean[:300])
+                _cleanup_login(name)
+                return
 
-            # 重复邮箱检测
-            if meta.email:
-                for existing_dir in Path(pool_dir).iterdir():
-                    if not existing_dir.is_dir() or existing_dir.name.startswith("."):
-                        continue
-                    existing_meta = read_meta(str(existing_dir))
-                    if existing_meta.email == meta.email:
-                        session["status"] = "duplicate"
-                        session["error"] = f"邮箱 {meta.email} 已在账号「{existing_dir.name}」中存在，无需重复添加"
-                        shutil.rmtree(str(tmp_dir), ignore_errors=True)
-                        logger.warning("🔐 登录[%s]: 邮箱重复 %s (已存在于 %s)", name, meta.email, existing_dir.name)
-                        return
+            # 5. 等待 code 提交（由 _submit_login_code 触发）
+            # _watch 线程会一直等到 session 状态变化
+            for _ in range(600):  # 最多等 10 分钟
+                if session["status"] not in ("waiting_for_code",):
+                    break
+                time.sleep(1)
 
-            # 登录成功 → 写入正式位置
-            acct_dir.mkdir(parents=True, exist_ok=True)
-            creds_path = acct_dir / "creds.json"
-            creds_path.write_text(creds_data)
-            os.chmod(str(creds_path), 0o600)
-            write_meta(str(acct_dir), meta)
+            if session["status"] == "waiting_for_code":
+                session["status"] = "failed"
+                session["error"] = "登录超时（10 分钟未输入 code）"
+                _cleanup_login(name)
+                return
 
-            shutil.rmtree(str(tmp_dir), ignore_errors=True)
+            if session["status"] == "code_submitted":
+                # 等待登录结果
+                raw = _pty_read(master_fd, timeout=30)
+                clean = _clean_ansi(raw)
+                logger.info("🔐 登录[%s]: 登录结果: %s", name, clean[:200])
 
-            session["status"] = "success"
-            logger.info("🎉 登录[%s]: 成功 (%s)", name, meta.email)
-        else:
+                # 检查凭证
+                cred_file = tmp_dir / ".credentials.json"
+                if cred_file.exists():
+                    creds_data = cred_file.read_text()
+                    logger.info("🔐 登录[%s]: 凭证文件已生成", name)
+
+                    # 提取 meta
+                    claude_json_file = tmp_dir / ".claude.json"
+                    if claude_json_file.exists():
+                        meta = extract_meta_from_claude_json(claude_json_file)
+                    else:
+                        meta = AccountMeta(display_name=name)
+
+                    # display_name 优先用用户输入的名称，fallback 到邮箱前缀
+                    if name:
+                        meta.display_name = name
+                    elif not meta.display_name and meta.email:
+                        meta.display_name = meta.email.split("@")[0]
+
+                    # 用邮箱决定目录名，而非用户输入的 name
+                    if meta.email:
+                        real_dirname = email_to_dirname(meta.email)
+                    else:
+                        real_dirname = name
+                    real_acct_dir = Path(pool_dir) / real_dirname
+
+                    # 重复邮箱检测
+                    if meta.email:
+                        for existing_dir in Path(pool_dir).iterdir():
+                            if not existing_dir.is_dir() or existing_dir.name.startswith("."):
+                                continue
+                            existing_meta = read_meta(str(existing_dir))
+                            if existing_meta.email == meta.email:
+                                session["status"] = "duplicate"
+                                session["error"] = f"邮箱 {meta.email} 已在账号「{existing_dir.name}」中存在"
+                                _cleanup_login(name)
+                                return
+
+                    # 写入正式位置（目录名用邮箱前缀）
+                    real_acct_dir.mkdir(parents=True, exist_ok=True)
+                    creds_path = real_acct_dir / "creds.json"
+                    creds_path.write_text(creds_data)
+                    os.chmod(str(creds_path), 0o600)
+                    write_meta(str(real_acct_dir), meta)
+
+                    session["status"] = "success"
+                    logger.info("🎉 登录[%s]: 成功 (%s)", name, meta.email)
+                    # 刷新账号池
+                    if _pool:
+                        _pool.check_all()
+                elif "login successful" in clean.lower():
+                    # 可能写入了 Keychain
+                    kc = read_keychain()
+                    if kc:
+                        creds_data = json.dumps({"claudeAiOauth": {
+                            "accessToken": kc.access_token,
+                            "refreshToken": kc.refresh_token,
+                            "expiresAt": kc.expires_at,
+                            "scopes": kc.scopes,
+                        }}, indent=2)
+                        acct_dir.mkdir(parents=True, exist_ok=True)
+                        creds_path = acct_dir / "creds.json"
+                        creds_path.write_text(creds_data)
+                        os.chmod(str(creds_path), 0o600)
+                        session["status"] = "success"
+                        logger.info("🎉 登录[%s]: 成功（Keychain）", name)
+                    else:
+                        session["status"] = "failed"
+                        session["error"] = "登录似乎成功但未找到凭证"
+                else:
+                    session["status"] = "failed"
+                    session["error"] = "登录未完成，未生成凭证"
+                    logger.error("❌ 登录[%s]: 未找到凭证", name)
+
+        except Exception as e:
             session["status"] = "failed"
-            session["error"] = "\n".join(output_lines[-5:]) or "登录未完成"
-            shutil.rmtree(str(tmp_dir), ignore_errors=True)
-            logger.error("❌ 登录[%s]: 失败已清理 — %s", name, session["error"])
+            session["error"] = str(e)
+            logger.error("❌ 登录[%s]: 异常 %s", name, e)
+        finally:
+            _cleanup_login(name)
 
-    t = threading.Thread(target=_watch, daemon=True)
+    t = threading.Thread(target=_drive_login, daemon=True)
     t.start()
 
     return {"status": "started", "name": name}
 
 
+def _cleanup_login(name: str) -> None:
+    """清理登录会话的 PTY 和临时目录."""
+    session = _login_sessions.get(name)
+    if not session:
+        return
+
+    # 关闭 PTY
+    master_fd = session.get("master_fd")
+    if master_fd is not None:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+
+    # 杀掉子进程
+    child_pid = session.get("child_pid")
+    if child_pid:
+        try:
+            os.kill(child_pid, 9)
+            os.waitpid(child_pid, os.WNOHANG)
+        except (OSError, ChildProcessError):
+            pass
+
+    # 清理临时目录（仅在失败时）
+    if session.get("status") not in ("success",):
+        tmp_dir = session.get("tmp_dir")
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def _submit_login_code(name: str, code: str) -> dict:
-    """Write the authorization code to the login subprocess's stdin."""
+    """通过 PTY 将 authorization code 写入 claude 交互式进程."""
     session = _login_sessions.get(name)
     if not session:
         return {"ok": False, "error": f"没有找到「{name}」的登录会话"}
 
-    proc = session.get("process")
-    if not proc or proc.stdin is None or proc.stdin.closed:
+    if session["status"] != "waiting_for_code":
+        return {"ok": False, "error": f"当前状态不是等待 code: {session['status']}"}
+
+    master_fd = session.get("master_fd")
+    if master_fd is None:
         return {"ok": False, "error": "登录进程已结束"}
 
     try:
-        proc.stdin.write(code.strip() + "\n")
-        proc.stdin.flush()
+        # 通过 PTY 写入 code + 回车（模拟终端粘贴）
+        os.write(master_fd, code.strip().encode())
+        time.sleep(0.3)
+        os.write(master_fd, b'\r')
         session["status"] = "code_submitted"
+        logger.info("🔐 登录[%s]: code 已通过 PTY 提交", name)
         return {"ok": True}
     except Exception as e:
         return {"ok": False, "error": str(e)}
