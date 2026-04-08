@@ -369,7 +369,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
 
-def start_server(pool_dir: str, host: str = "0.0.0.0", port: int = 9210) -> None:
+def start_server(pool_dir: str, host: str = "0.0.0.0", port: int = 8210) -> None:
     global _pool, _pool_dir
     _pool_dir = pool_dir
 

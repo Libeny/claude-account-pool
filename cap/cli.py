@@ -173,7 +173,7 @@ def main() -> None:
 
     p_serve = sub.add_parser("serve", help="start web UI + daemon")
     p_serve.add_argument("--host", default="0.0.0.0")
-    p_serve.add_argument("--port", type=int, default=9210)
+    p_serve.add_argument("--port", type=int, default=8210)
 
     args = parser.parse_args()
 
