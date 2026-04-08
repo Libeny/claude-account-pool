@@ -17,6 +17,7 @@ Selection strategy (Sonnet workload):
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import time
@@ -24,7 +25,7 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
-from cap.types import AccountState, AccountStatus, UsageSnapshot
+from cap.types import AccountState, AccountStatus, CredentialsFile, UsageSnapshot
 from cap.credentials import read_credentials, write_credentials, sync_active_to_keychain, read_keychain
 from cap.token_refresher import refresh_token, RefreshOk
 from cap.usage_monitor import fetch_usage
@@ -68,38 +69,44 @@ class AccountPool:
         self.check_all()
 
     def _bootstrap_local(self) -> None:
-        """首次启动: 把本地 ~/.claude/.credentials.json 迁移到账号池。
-
-        流程:
-          1. 检查池目录是否已有账号 → 有则跳过
-          2. 读本地 credentials（必须是真实文件，不是 symlink）
-          3. 从 ~/.claude.json 提取邮箱等 meta
-          4. 用邮箱前缀作为目录名，拷贝 creds 到池中
-          5. 用 symlink 替换原文件
-          6. macOS: 同步 Keychain
-        """
+        """首次启动: 把本地 ~/.claude/.credentials.json 迁移到账号池。"""
         pool_path = Path(self.accounts_dir)
         pool_path.mkdir(parents=True, exist_ok=True)
 
-        # 已有账号 → 不重复导入
-        existing = [p for p in pool_path.iterdir() if p.is_dir() and not p.name.startswith(".")]
+        # 已有包含 creds.json 的账号 → 不重复导入
+        existing = [
+            p for p in pool_path.iterdir()
+            if p.is_dir() and not p.name.startswith(".") and (p / "creds.json").exists()
+        ]
         if existing:
+            logger.info("⏭️ 账号池已有 %d 个账号，跳过自动导入", len(existing))
             return
+
+        # 清理之前失败留下的空目录
+        for p in pool_path.iterdir():
+            if p.is_dir() and not p.name.startswith(".") and not (p / "creds.json").exists():
+                logger.info("🧹 清理空目录: %s", p.name)
+                shutil.rmtree(str(p), ignore_errors=True)
 
         # 已经是 symlink → 说明已经迁移过
         if CRED_LINK.is_symlink():
+            logger.info("⏭️ .credentials.json 已是软链接，跳过自动导入")
             return
+
+        logger.info("🔍 开始自动导入本地 Claude 账号...")
+        logger.info("   📄 凭证路径: %s (存在: %s)", CRED_LINK, CRED_LINK.exists())
+        logger.info("   📄 配置路径: %s (存在: %s)", CLAUDE_HOME / ".claude.json",
+                     (Path.home() / ".claude.json").exists())
 
         # 提取 meta 获取邮箱
         meta = extract_meta_from_claude_json()
         dir_name = email_to_dirname(meta.email) if meta.email else "local"
+        logger.info("   👤 邮箱: %s → 目录名: %s", meta.email or "未知", dir_name)
 
         acct_dir = pool_path / dir_name
         acct_dir.mkdir(parents=True, exist_ok=True)
 
-        # 读凭证: 直接读 ~/.claude/.credentials.json（原始文件名），macOS fallback 到 Keychain
-        from cap.types import CredentialsFile
-        import json
+        # 读凭证: 直接读 ~/.claude/.credentials.json，macOS fallback 到 Keychain
         creds: CredentialsFile | None = None
         if CRED_LINK.exists():
             try:
@@ -112,13 +119,20 @@ class AccountPool:
                         expires_at=int(oauth.get("expiresAt", 0)),
                         scopes=oauth.get("scopes", []),
                     )
-            except Exception:
-                pass
+                    logger.info("   🔑 从文件读取凭证成功")
+                else:
+                    logger.warning("   ⚠️ 凭证文件存在但缺少 accessToken 或 refreshToken")
+            except Exception as e:
+                logger.warning("   ⚠️ 读取凭证文件失败: %s", e)
+
         if not creds:
             creds = read_keychain()
+            if creds:
+                logger.info("   🔑 从 Keychain 读取凭证成功")
+
         if not creds:
-            logger.info("⏭️ 未发现本地凭证，跳过自动导入")
-            acct_dir.rmdir()
+            logger.warning("❌ 未发现本地凭证，跳过自动导入")
+            shutil.rmtree(str(acct_dir), ignore_errors=True)
             return
 
         # 写 creds.json 到账号目录
@@ -133,11 +147,10 @@ class AccountPool:
         CRED_LINK.symlink_to((acct_dir / "creds.json").resolve())
 
         # macOS: 保持 Keychain 一致
-        creds = read_credentials(str(acct_dir))
-        if creds:
-            sync_active_to_keychain(creds)
+        sync_active_to_keychain(creds)
 
-        logger.info("🎉 自动导入本地账号「%s」(%s)", dir_name, meta.email or "未知邮箱")
+        logger.info("🎉 自动导入完成！账号「%s」(%s) 已加入池中", dir_name, meta.email or "未知邮箱")
+        logger.info("   📁 %s → %s", CRED_LINK, (acct_dir / "creds.json").resolve())
 
     def check_all(self) -> None:
         self._scan()
@@ -145,19 +158,13 @@ class AccountPool:
             try:
                 self._check_one(acct)
             except Exception as e:
-                logger.error("%s: check error: %s", acct.name, e)
+                logger.error("❌ %s: 检查异常: %s", acct.name, e)
 
         self._log_summary()
 
     # ── Selection ──
 
     def pick(self, affinity_name: Optional[str] = None) -> Optional[AccountState]:
-        """
-        Pick the best account for a Sonnet task.
-
-        三档漏斗: healthy > week_ok > exhausted
-        全军覆没: 取 5h 最低 + 报警
-        """
         active = [a for a in self._accounts if a.status == AccountStatus.ACTIVE]
         if not active:
             return None
@@ -177,21 +184,17 @@ class AccountPool:
             else:
                 healthy.append(a)
 
-        # Affinity: keep current account if it's still healthy
         if affinity_name:
             for a in healthy:
                 if a.name == affinity_name:
                     return a
 
-        # 1st: pick healthiest
         if healthy:
             return min(healthy, key=lambda a: _effective_load(a.usage))
 
-        # 2nd: 7d has room, 5h temporarily full (will reset in hours)
         if week_ok:
             return min(week_ok, key=lambda a: a.usage.five_hour.utilization if a.usage else 0)
 
-        # 3rd: all exhausted — pick 5h lowest + alert
         if exhausted:
             best = min(exhausted, key=lambda a: a.usage.five_hour.utilization if a.usage else 0)
             self.on_alert("all_exhausted", best)

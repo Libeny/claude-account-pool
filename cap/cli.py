@@ -151,11 +151,11 @@ def cmd_active(args: argparse.Namespace) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
-    if args.daemon:
+    if args.foreground:
+        from cap.web import start_server
+        start_server(args.pool_dir, host=args.host, port=args.port)
+    else:
         _daemonize(args)
-        return
-    from cap.web import start_server
-    start_server(args.pool_dir, host=args.host, port=args.port)
 
 
 def _daemonize(args: argparse.Namespace) -> None:
@@ -163,7 +163,7 @@ def _daemonize(args: argparse.Namespace) -> None:
     log_file = os.path.expanduser("~/.cap/cap.log")
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-    cmd = ["cap", "serve", "--host", args.host, "--port", str(args.port), "--pool-dir", args.pool_dir]
+    cmd = ["cap", "serve", "--foreground", "--host", args.host, "--port", str(args.port), "--pool-dir", args.pool_dir]
     with open(log_file, "a") as f:
         proc = subprocess.Popen(
             cmd,
@@ -228,10 +228,10 @@ def main() -> None:
     p_sw = sub.add_parser("switch", help="切换生效账号")
     p_sw.add_argument("name", help="目标账号名称")
 
-    p_serve = sub.add_parser("serve", help="启动 Web 面板 + 守护进程")
+    p_serve = sub.add_parser("serve", help="启动 Web 面板 + 守护进程（默认后台运行）")
     p_serve.add_argument("--host", default="0.0.0.0")
     p_serve.add_argument("--port", type=int, default=8210)
-    p_serve.add_argument("-d", "--daemon", action="store_true", help="后台运行")
+    p_serve.add_argument("-f", "--foreground", action="store_true", help="前台运行（调试用）")
 
     sub.add_parser("stop", help="停止后台守护进程")
 
