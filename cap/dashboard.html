@@ -34,15 +34,20 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text-p
 .btn-sm { padding: 4px 12px; font-size: 12px; }
 
 /* Icon buttons for card actions */
-.icon-btn { width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; transition: all var(--transition); color: var(--text-tertiary); }
-.icon-btn:hover { background: var(--bg); border-color: var(--border-hover); color: var(--text-primary); }
-.icon-btn.act-edit:hover { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
-.icon-btn.act-switch:hover { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
-.icon-btn.act-delete:hover { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger); }
-.icon-btn.act-active { background: var(--success-bg); border-color: var(--success-border); color: var(--success); cursor: default; font-size: 12px; width: auto; border-radius: 16px; padding: 0 10px; gap: 4px; font-weight: 600; font-family: var(--font-sans); }
+.icon-btn { width: 30px; height: 30px; padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all var(--transition); color: var(--text-tertiary); }
+.icon-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.icon-btn:hover { background: var(--bg); color: var(--text-secondary); }
+.icon-btn.act-edit:hover { background: var(--accent-light); color: var(--accent); }
+.icon-btn.act-switch:hover { background: var(--success-bg); color: var(--success); }
+.icon-btn.act-delete:hover { background: var(--danger-bg); color: var(--danger); }
+.icon-btn:disabled { opacity: .25; cursor: not-allowed; }
+.icon-btn:disabled:hover { background: transparent; color: var(--text-tertiary); }
+.pill-active { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 12px; background: var(--success-bg); border: 1px solid var(--success-border); color: var(--success); font-size: 11px; font-weight: 600; font-family: var(--font-sans); }
+.pill-active svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2.5; }
 .icon-btn-tip { position: relative; }
-.icon-btn-tip::after { content: attr(data-tip); position: absolute; bottom: -24px; left: 50%; transform: translateX(-50%); font-size: 10px; white-space: nowrap; background: var(--text-primary); color: #fff; padding: 2px 6px; border-radius: 4px; opacity: 0; pointer-events: none; transition: opacity .15s; }
+.icon-btn-tip::after { content: attr(data-tip); position: absolute; bottom: -26px; left: 50%; transform: translateX(-50%); font-size: 10px; white-space: nowrap; background: var(--text-primary); color: #fff; padding: 2px 8px; border-radius: 4px; opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 10; }
 .icon-btn-tip:hover::after { opacity: 1; }
+.actions-divider { width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
 
 .mode-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); background: var(--bg); padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border); }
 .mode-toggle label { cursor: pointer; user-select: none; }
@@ -132,24 +137,24 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text-p
         <div class="toggle-knob"></div>
       </div>
     </div>
-    <button class="btn" onclick="manualCheck()">🔍 立即检查</button>
-    <button class="btn btn-primary" onclick="showAddModal()">＋ 新增账号</button>
+    <button class="btn" onclick="manualCheck()">立即检查</button>
+    <button class="btn btn-primary" onclick="showAddModal()">+ 新增账号</button>
   </div>
 </div>
 
 <div class="container">
-  <div class="section-title">📋 账号列表</div>
+  <div class="section-title">账号列表</div>
   <div id="accounts"></div>
   <div class="last-refresh" id="last-refresh"></div>
 
-  <div class="section-title" style="margin-top:24px;">🔔 报警日志</div>
+  <div class="section-title" style="margin-top:24px;">报警日志</div>
   <div class="alert-card" id="alerts"><div class="alert-empty">暂无报警</div></div>
 </div>
 
 <!-- 新增账号弹窗 -->
 <div class="overlay" id="add-modal">
   <div class="modal">
-    <div class="modal-header"><h3>🔐 新增账号</h3><button class="btn btn-sm" onclick="hideAddModal()">✕</button></div>
+    <div class="modal-header"><h3>新增账号</h3><button class="btn btn-sm" onclick="hideAddModal()">✕</button></div>
     <div class="modal-body">
       <div id="add-step-1">
         <div class="field"><label>账号备注名</label><input id="add-name" placeholder="例如: alice、团队Pro、备用号" autocomplete="off" /></div>
@@ -159,14 +164,14 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text-p
         <div class="login-url-box" id="login-url">正在获取登录链接...</div>
         <p style="font-size:13px; color:var(--text-secondary); margin:12px 0 8px;">2. 授权成功后，将页面上显示的登录码粘贴到下方：</p>
         <div class="field" style="margin-bottom:8px;"><input id="login-code" placeholder="粘贴登录码..." autocomplete="off" style="font-family:var(--font-mono); letter-spacing:1px;" /></div>
-        <button class="btn btn-primary" style="width:100%;" onclick="submitCode()">📤 提交登录码</button>
+        <button class="btn btn-primary" style="width:100%;" onclick="submitCode()">提交登录码</button>
         <div class="login-status" id="login-status">正在启动 Claude 登录...</div>
       </div>
       <div id="add-step-3" style="display:none;"><p id="add-result" style="font-size:14px; text-align:center; padding:12px;"></p></div>
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="hideAddModal()">取消</button>
-      <button class="btn btn-primary" id="add-submit" onclick="startLogin()">🚀 开始登录</button>
+      <button class="btn btn-primary" id="add-submit" onclick="startLogin()">开始登录</button>
     </div>
   </div>
 </div>
@@ -174,14 +179,14 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text-p
 <!-- 编辑备注弹窗 -->
 <div class="overlay" id="edit-modal">
   <div class="modal">
-    <div class="modal-header"><h3>✏️ 编辑备注</h3><button class="btn btn-sm" onclick="hideEditModal()">✕</button></div>
+    <div class="modal-header"><h3>编辑备注</h3><button class="btn btn-sm" onclick="hideEditModal()">✕</button></div>
     <div class="modal-body">
       <div class="field"><label>账号备注名</label><input id="edit-display-name" placeholder="输入新的备注名..." autocomplete="off" /></div>
       <div style="font-size:11px; color:var(--text-tertiary);">账号 ID: <span id="edit-account-id" style="font-family:var(--font-mono);"></span></div>
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="hideEditModal()">取消</button>
-      <button class="btn btn-primary" onclick="saveEdit()">💾 保存</button>
+      <button class="btn btn-primary" onclick="saveEdit()">保存</button>
     </div>
   </div>
 </div>
@@ -192,7 +197,7 @@ body { font-family: var(--font-sans); background: var(--bg); color: var(--text-p
 const API = '';
 let autoSwitch = true;
 
-const ALERT_LABELS = { all_exhausted: '🚨 全部耗尽', refresh_failed: '❌ 刷新失败', usage_warning: '⚠️ 用量预警', auto_switch: '🔄 自动切换' };
+const ALERT_LABELS = { all_exhausted: '全部耗尽', refresh_failed: '刷新失败', usage_warning: '用量预警', auto_switch: '自动切换' };
 
 function usageColor(pct) { return pct >= 90 ? 'red' : pct >= 80 ? 'yellow' : 'green'; }
 function fmtReset(iso) {
@@ -227,11 +232,11 @@ function renderAccount(a) {
 
   // Status badges
   const badges = [];
-  if (a.status === 'needs_login') badges.push('<span class="badge badge-error">🔴 需要登录</span>');
+  if (a.status === 'needs_login') badges.push('<span class="badge badge-error">需要登录</span>');
   if (u) {
     const eff = Math.max(u.five_hour ?? 0, u.seven_day_sonnet ?? 0);
-    if (eff >= 90) badges.push('<span class="badge badge-error">🔥 已过载</span>');
-    else if (eff >= 80) badges.push('<span class="badge badge-warning">⚠️ 用量预警</span>');
+    if (eff >= 90) badges.push('<span class="badge badge-error">已过载</span>');
+    else if (eff >= 80) badges.push('<span class="badge badge-warning">用量预警</span>');
   }
 
   // Card class
@@ -243,20 +248,27 @@ function renderAccount(a) {
     else if (eff >= 80) cls.push('is-warning');
   }
 
-  // Action buttons: ✏️ 编辑 | 🔄 切换 or ✅ 已生效 | 🗑️ 删除
+  // SVG icon templates
+  const ICO = {
+    edit: '<svg viewBox="0 0 24 24"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
+    switch: '<svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>',
+    check: '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>',
+    trash: '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  };
+
   const dn = displayName.replace(/'/g, "\\'");
-  const editBtn = `<button class="icon-btn act-edit icon-btn-tip" data-tip="编辑备注" onclick="showEditModal('${a.name}','${dn}')">✏️</button>`;
+  const editBtn = `<button class="icon-btn act-edit icon-btn-tip" data-tip="编辑备注" onclick="showEditModal('${a.name}','${dn}')">${ICO.edit}</button>`;
 
   let switchBtn;
   if (a.active) {
-    switchBtn = `<span class="icon-btn act-active">✅ 已生效</span>`;
+    switchBtn = `<span class="pill-active">${ICO.check} 已生效</span>`;
   } else if (a.status === 'active') {
-    switchBtn = `<button class="icon-btn act-switch icon-btn-tip" data-tip="切换生效" onclick="confirmSwitch('${a.name}','${dn}')">🔄</button>`;
+    switchBtn = `<button class="icon-btn act-switch icon-btn-tip" data-tip="切换生效" onclick="confirmSwitch('${a.name}','${dn}')">${ICO.switch}</button>`;
   } else {
-    switchBtn = `<button class="icon-btn icon-btn-tip" data-tip="不可用" disabled style="opacity:.3;cursor:not-allowed;">🔄</button>`;
+    switchBtn = `<button class="icon-btn icon-btn-tip" data-tip="不可用" disabled>${ICO.switch}</button>`;
   }
 
-  const deleteBtn = `<button class="icon-btn act-delete icon-btn-tip" data-tip="删除账号" onclick="confirmRemove('${a.name}','${dn}')">🗑️</button>`;
+  const deleteBtn = `<button class="icon-btn act-delete icon-btn-tip" data-tip="删除账号" onclick="confirmRemove('${a.name}','${dn}')">${ICO.trash}</button>`;
 
   const emailLine = a.email ? `<div class="account-email">${a.email}${a.org_name ? ' · ' + a.org_name : ''}</div>` : '';
   const tokenH = a.token_hours_left ? a.token_hours_left.toFixed(1) : '0';
@@ -264,7 +276,7 @@ function renderAccount(a) {
   return `<div class="${cls.join(' ')}">
     <div class="account-top">
       <div class="account-name">${displayName} ${badges.join(' ')}</div>
-      <div class="account-actions">${editBtn} ${switchBtn} ${deleteBtn}</div>
+      <div class="account-actions">${editBtn}<span class="actions-divider"></span>${switchBtn}<span class="actions-divider"></span>${deleteBtn}</div>
     </div>
     ${emailLine}
     ${u ? `<div class="usage-row">
@@ -272,7 +284,7 @@ function renderAccount(a) {
       ${renderUsage('7天总额度', u.seven_day, u.seven_day_resets_at)}
       ${renderUsage('7天 Sonnet', u.seven_day_sonnet, u.seven_day_sonnet_resets_at)}
     </div>` : '<div style="color:var(--text-tertiary);font-size:12px;">暂无用量数据</div>'}
-    <div class="token-line">🔑 Token 剩余 ${tokenH} 小时</div>
+    <div class="token-line">Token 剩余 ${tokenH} 小时</div>
   </div>`;
 }
 
@@ -289,7 +301,7 @@ async function refreshData() {
     const el = document.getElementById('accounts');
     el.innerHTML = ar.accounts.length
       ? ar.accounts.map(renderAccount).join('')
-      : '<div class="empty-state"><p>📭 暂无账号</p><p>点击 <strong>＋ 新增账号</strong> 添加你的第一个 Claude 账号</p></div>';
+      : '<div class="empty-state"><p>暂无账号</p><p>点击 <strong>+ 新增账号</strong> 添加你的第一个 Claude 账号</p></div>';
 
     const al = document.getElementById('alerts');
     al.innerHTML = lr.alerts.length
@@ -393,21 +405,21 @@ async function startLogin() {
       clearInterval(loginPoll);
       document.getElementById('add-step-2').style.display = 'none';
       document.getElementById('add-step-3').style.display = '';
-      document.getElementById('add-result').innerHTML = '🎉 账号「'+name+'」添加成功！';
+      document.getElementById('add-result').innerHTML = '账号「'+name+'」添加成功！';
       document.getElementById('add-result').style.color = 'var(--success)';
       refreshData();
     } else if (s.status === 'failed') {
       clearInterval(loginPoll);
-      statusEl.textContent = '❌ 登录失败: ' + (s.error || '未知错误');
+      statusEl.textContent = '登录失败: ' + (s.error || '未知错误');
       statusEl.style.color = 'var(--danger)';
     } else if (s.status === 'code_submitted') {
-      statusEl.textContent = '⏳ 登录码已提交，正在验证...';
+      statusEl.textContent = '登录码已提交，正在验证...';
       statusEl.style.color = 'var(--accent)';
     } else if (s.status === 'waiting_for_code') {
-      statusEl.textContent = '👆 请打开上方链接授权，然后粘贴登录码';
+      statusEl.textContent = '请打开上方链接授权，然后粘贴登录码';
       statusEl.style.color = 'var(--text-secondary)';
     } else {
-      statusEl.textContent = '⏳ 正在启动登录流程...';
+      statusEl.textContent = '正在启动登录流程...';
     }
   }, 2000);
 }
@@ -416,7 +428,7 @@ async function submitCode() {
   if (!code) { alert('请粘贴登录码'); return; }
   const res = await fetch(API + '/api/add/code', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name: _currentLoginName, code}) }).then(r => r.json());
   if (!res.ok) { alert(res.error || '提交失败'); return; }
-  document.getElementById('login-status').textContent = '⏳ 登录码已提交，正在验证...';
+  document.getElementById('login-status').textContent = '登录码已提交，正在验证...';
   document.getElementById('login-status').style.color = 'var(--accent)';
 }
 
