@@ -257,7 +257,8 @@ function renderUsage(label, pct, resetIso) {
 
 function renderAccount(a) {
   const u = a.usage;
-  const displayName = a.display_name || a.name;
+  const emailPrefix = a.email ? a.email.split('@')[0] : '';
+  const displayName = a.display_name || emailPrefix || a.name;
 
   // Status badges
   const badges = [];
@@ -285,21 +286,22 @@ function renderAccount(a) {
     trash: '<svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
   };
 
+  const safeName = a.name.replace(/'/g, "\\'");
   const dn = displayName.replace(/'/g, "\\'");
-  const editBtn = `<button class="icon-btn act-edit icon-btn-tip" data-tip="编辑备注" onclick="showEditModal('${a.name}','${dn}')">${ICO.edit}</button>`;
+  const editBtn = `<button class="icon-btn act-edit icon-btn-tip" data-tip="编辑备注" onclick="showEditModal('${safeName}','${dn}')">${ICO.edit}</button>`;
 
   let switchBtn;
   if (a.active) {
     switchBtn = `<span class="pill-active">${ICO.check} 已生效</span>`;
   } else if (a.status === 'active') {
-    switchBtn = `<button class="icon-btn act-switch icon-btn-tip" data-tip="切换生效" onclick="confirmSwitch('${a.name}','${dn}')">${ICO.switch}</button>`;
+    switchBtn = `<button class="icon-btn act-switch icon-btn-tip" data-tip="切换生效" onclick="confirmSwitch('${safeName}','${dn}')">${ICO.switch}</button>`;
   } else {
     switchBtn = `<button class="icon-btn icon-btn-tip" data-tip="不可用" disabled>${ICO.switch}</button>`;
   }
 
-  const deleteBtn = `<button class="icon-btn act-delete icon-btn-tip" data-tip="删除账号" onclick="confirmRemove('${a.name}','${dn}')">${ICO.trash}</button>`;
+  const deleteBtn = `<button class="icon-btn act-delete icon-btn-tip" data-tip="删除账号" onclick="confirmRemove('${safeName}','${dn}')">${ICO.trash}</button>`;
 
-  const emailLine = a.email ? `<div class="account-email">${a.email}${a.org_name ? ' · ' + a.org_name : ''}</div>` : '';
+  const emailLine = a.email ? `<div class="account-email">${a.email}</div>` : '';
   const tokenH = a.token_hours_left ? a.token_hours_left.toFixed(1) : '0';
 
   return `<div class="${cls.join(' ')}">

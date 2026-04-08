@@ -352,7 +352,7 @@ class Handler(BaseHTTPRequestHandler):
                 if link.is_symlink():
                     link.unlink()
             shutil.rmtree(str(target), ignore_errors=True)
-            _pool.check_all()  # 刷新池状态
+            _pool._scan()  # 只刷新目录列表，不做网络请求
             self._json_response({"ok": True, "removed": name})
 
         elif self.path == "/api/edit":
