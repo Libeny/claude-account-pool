@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAP — Claude 账号池</title>
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #faf9f7; --surface: #ffffff; --border: #e8e5df; --border-hover: #d4cfc8;
+  --text-primary: #1a1a17; --text-secondary: #6b6560; --text-tertiary: #9b9590;
+  --accent: #c96442; --accent-light: #fdf0eb; --accent-dark: #a84e30;
+  --success: #2d8a56; --success-bg: #ecf7f0; --success-border: #b4dfc4;
+  --warning: #b8860b; --warning-bg: #fef8e7; --warning-border: #e8d5a0;
+  --danger: #d04040; --danger-bg: #fdeaea; --danger-border: #f0b8b8;
+  --font-sans: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', monospace;
+  --radius: 12px; --radius-sm: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.05); --shadow-lg: 0 6px 24px rgba(0,0,0,.1);
+  --transition: 180ms ease;
+}
+body { font-family: var(--font-sans); background: var(--bg); color: var(--text-primary); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+
+.header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 32px; display: flex; justify-content: space-between; align-items: center; }
+.header h1 { font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.header h1 .logo { color: var(--accent); font-weight: 800; }
+.header-actions { display: flex; gap: 8px; align-items: center; }
+.container { max-width: 960px; margin: 0 auto; padding: 24px 32px; }
+
+.btn { padding: 8px 16px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); transition: all var(--transition); font-family: var(--font-sans); display: inline-flex; align-items: center; gap: 5px; }
+.btn:hover { background: var(--bg); border-color: var(--border-hover); }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
+.btn-danger { color: var(--danger); }
+.btn-danger:hover { background: var(--danger-bg); border-color: var(--danger-border); }
+.btn-success { color: var(--success); }
+.btn-success:hover { background: var(--success-bg); border-color: var(--success-border); }
+.btn-sm { padding: 4px 12px; font-size: 12px; }
+
+.mode-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); background: var(--bg); padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border); }
+.mode-toggle label { cursor: pointer; user-select: none; }
+.toggle-track { width: 36px; height: 20px; border-radius: 10px; background: var(--border); position: relative; cursor: pointer; transition: background var(--transition); }
+.toggle-track.on { background: var(--success); }
+.toggle-knob { width: 16px; height: 16px; border-radius: 50%; background: #fff; position: absolute; top: 2px; left: 2px; transition: left var(--transition); box-shadow: 0 1px 2px rgba(0,0,0,.15); }
+.toggle-track.on .toggle-knob { left: 18px; }
+
+.section-title { font-size: 12px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
+
+.account-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px; margin-bottom: 10px; transition: all var(--transition); }
+.account-card:hover { border-color: var(--border-hover); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+.account-card.is-active { border-color: var(--success-border); background: linear-gradient(135deg, var(--success-bg) 0%, var(--surface) 100%); }
+.account-card.is-warning { border-left: 3px solid var(--warning); }
+.account-card.is-danger { border-left: 3px solid var(--danger); }
+
+.account-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.account-name { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.account-email { font-size: 11px; color: var(--text-tertiary); font-family: var(--font-mono); margin-bottom: 12px; }
+.account-actions { display: flex; gap: 6px; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; letter-spacing: .3px; }
+.badge-active { background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border); }
+.badge-warning { background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); }
+.badge-error { background: var(--danger-bg); color: var(--danger); border: 1px solid var(--danger-border); }
+
+.usage-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.usage-label { font-size: 11px; color: var(--text-tertiary); margin-bottom: 4px; font-weight: 500; }
+.usage-track { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; border: 1px solid var(--border); }
+.usage-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+.usage-fill.green { background: var(--success); }
+.usage-fill.yellow { background: var(--warning); }
+.usage-fill.red { background: var(--danger); }
+.usage-meta { display: flex; justify-content: space-between; margin-top: 3px; font-size: 11px; }
+.usage-pct { font-weight: 600; }
+.usage-pct.green { color: var(--success); }
+.usage-pct.yellow { color: var(--warning); }
+.usage-pct.red { color: var(--danger); }
+.usage-reset { color: var(--text-tertiary); }
+.token-line { font-size: 11px; color: var(--text-tertiary); margin-top: 10px; font-family: var(--font-mono); }
+
+.alert-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); max-height: 220px; overflow-y: auto; }
+.alert-item { padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 12px; display: flex; gap: 12px; align-items: center; }
+.alert-item:last-child { border-bottom: none; }
+.alert-time { color: var(--text-tertiary); font-family: var(--font-mono); font-size: 11px; white-space: nowrap; }
+.alert-badge { padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.alert-badge.all_exhausted { background: var(--danger-bg); color: var(--danger); }
+.alert-badge.refresh_failed { background: var(--danger-bg); color: var(--danger); }
+.alert-badge.usage_warning { background: var(--warning-bg); color: var(--warning); }
+.alert-badge.auto_switch { background: var(--success-bg); color: var(--success); }
+.alert-msg { color: var(--text-secondary); }
+.alert-empty { padding: 16px; text-align: center; color: var(--text-tertiary); font-size: 12px; }
+
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,.18); backdrop-filter: blur(2px); z-index: 50; display: none; align-items: flex-start; justify-content: center; padding-top: 100px; }
+.overlay.show { display: flex; }
+.modal { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-lg); width: 440px; max-width: 92vw; animation: fadeUp .2s ease; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+.modal-header { padding: 18px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.modal-header h3 { font-size: 15px; font-weight: 600; }
+.modal-body { padding: 24px; }
+.modal-footer { padding: 14px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+.field { margin-bottom: 16px; }
+.field label { display: block; font-size: 11px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+.field input { width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; font-family: var(--font-sans); background: var(--surface); color: var(--text-primary); outline: none; }
+.field input:focus { border-color: var(--accent); }
+.login-url-box { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; word-break: break-all; font-size: 12px; font-family: var(--font-mono); margin: 12px 0; }
+.login-url-box a { color: var(--accent); text-decoration: none; }
+.login-url-box a:hover { text-decoration: underline; }
+.login-status { font-size: 12px; color: var(--text-tertiary); margin-top: 8px; }
+.empty-state { text-align: center; padding: 48px 24px; color: var(--text-tertiary); }
+.empty-state p { margin-top: 8px; font-size: 13px; }
+.last-refresh { font-size: 11px; color: var(--text-tertiary); text-align: right; margin-top: 6px; font-family: var(--font-mono); }
+
+/* Confirm dialog */
+.confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.25); backdrop-filter: blur(2px); z-index: 100; display: flex; align-items: center; justify-content: center; }
+.confirm-box { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 24px; width: 360px; text-align: center; animation: fadeUp .15s ease; }
+.confirm-box p { font-size: 14px; margin-bottom: 20px; color: var(--text-primary); }
+.confirm-box .confirm-actions { display: flex; gap: 8px; justify-content: center; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><span class="logo">CAP</span> Claude 账号池</h1>
+  <div class="header-actions">
+    <div class="mode-toggle">
+      <label>自动切换</label>
+      <div class="toggle-track on" id="auto-toggle" onclick="toggleAutoSwitch()">
+        <div class="toggle-knob"></div>
+      </div>
+    </div>
+    <button class="btn" onclick="manualCheck()">立即检查</button>
+    <button class="btn btn-primary" onclick="showAddModal()">+ 新增账号</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="section-title">账号列表</div>
+  <div id="accounts"></div>
+  <div class="last-refresh" id="last-refresh"></div>
+
+  <div class="section-title" style="margin-top:24px;">报警日志</div>
+  <div class="alert-card" id="alerts">
+    <div class="alert-empty">暂无报警</div>
+  </div>
+</div>
+
+<!-- 新增账号弹窗 -->
+<div class="overlay" id="add-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>新增账号</h3>
+      <button class="btn btn-sm" onclick="hideAddModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="add-step-1">
+        <div class="field">
+          <label>账号备注名</label>
+          <input id="add-name" placeholder="例如: alice、团队Pro、备用号" autocomplete="off" />
+        </div>
+      </div>
+      <div id="add-step-2" style="display:none;">
+        <p style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">1. 在浏览器中打开以下链接完成授权：</p>
+        <div class="login-url-box" id="login-url">正在获取登录链接...</div>
+        <p style="font-size:13px; color:var(--text-secondary); margin:12px 0 8px;">2. 授权成功后，将页面上显示的登录码粘贴到下方：</p>
+        <div class="field" style="margin-bottom:8px;">
+          <input id="login-code" placeholder="粘贴登录码..." autocomplete="off" style="font-family:var(--font-mono); letter-spacing:1px;" />
+        </div>
+        <button class="btn btn-primary" style="width:100%;" onclick="submitCode()">提交登录码</button>
+        <div class="login-status" id="login-status">正在启动 Claude 登录...</div>
+      </div>
+      <div id="add-step-3" style="display:none;">
+        <p id="add-result" style="font-size:14px; text-align:center; padding:12px;"></p>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="hideAddModal()">取消</button>
+      <button class="btn btn-primary" id="add-submit" onclick="startLogin()">开始登录</button>
+    </div>
+  </div>
+</div>
+
+<!-- 确认弹窗容器 -->
+<div id="confirm-container"></div>
+
+<script>
+const API = '';
+let autoSwitch = true;
+
+const ALERT_LABELS = {
+  all_exhausted: '全部耗尽',
+  refresh_failed: '刷新失败',
+  usage_warning: '用量预警',
+  auto_switch: '自动切换',
+};
+
+function usageColor(pct) { return pct >= 90 ? 'red' : pct >= 80 ? 'yellow' : 'green'; }
+
+function fmtReset(iso) {
+  if (!iso) return '';
+  const diff = (new Date(iso) - new Date()) / 60000;
+  if (diff <= 0) return '重置中...';
+  if (diff < 60) return Math.round(diff) + '分钟';
+  const h = Math.floor(diff / 60), m = Math.round(diff % 60);
+  return h >= 24 ? Math.floor(h/24) + '天 ' + (h%24) + '小时' : h + '小时 ' + m + '分钟';
+}
+
+function showConfirm(msg, onYes) {
+  const el = document.getElementById('confirm-container');
+  el.innerHTML = `<div class="confirm-overlay" onclick="if(event.target===this)hideConfirm()">
+    <div class="confirm-box">
+      <p>${msg}</p>
+      <div class="confirm-actions">
+        <button class="btn" onclick="hideConfirm()">取消</button>
+        <button class="btn btn-primary" id="confirm-yes">确认</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('confirm-yes').onclick = () => { hideConfirm(); onYes(); };
+}
+function hideConfirm() { document.getElementById('confirm-container').innerHTML = ''; }
+
+function renderUsage(label, pct, resetIso) {
+  if (pct === null || pct === undefined) return '';
+  const c = usageColor(pct);
+  return `<div class="usage-item">
+    <div class="usage-label">${label}</div>
+    <div class="usage-track"><div class="usage-fill ${c}" style="width:${pct}%"></div></div>
+    <div class="usage-meta">
+      <span class="usage-pct ${c}">${pct}%</span>
+      <span class="usage-reset">${fmtReset(resetIso) ? fmtReset(resetIso) + '后重置' : ''}</span>
+    </div>
+  </div>`;
+}
+
+function renderAccount(a) {
+  const u = a.usage;
+  const badges = [];
+  if (a.active) badges.push('<span class="badge badge-active">当前生效</span>');
+  if (a.status === 'needs_login') badges.push('<span class="badge badge-error">需要登录</span>');
+  if (u) {
+    const eff = Math.max(u.five_hour ?? 0, u.seven_day_sonnet ?? 0);
+    if (eff >= 90) badges.push('<span class="badge badge-error">已过载</span>');
+    else if (eff >= 80) badges.push('<span class="badge badge-warning">用量预警</span>');
+  }
+
+  const displayName = a.display_name || a.name;
+  const emailLine = a.email ? `<div class="account-email">${a.email}${a.org_name ? ' · ' + a.org_name : ''}</div>` : '';
+
+  const cls = ['account-card'];
+  if (a.active) cls.push('is-active');
+  if (u) {
+    const eff = Math.max(u.five_hour ?? 0, u.seven_day_sonnet ?? 0);
+    if (eff >= 90) cls.push('is-danger');
+    else if (eff >= 80) cls.push('is-warning');
+  }
+
+  const switchBtn = !a.active && a.status === 'active'
+    ? `<button class="btn btn-sm btn-success" onclick="confirmSwitch('${a.name}','${displayName}')">切换生效</button>` : '';
+  const tokenH = a.token_hours_left ? a.token_hours_left.toFixed(1) : '0';
+
+  return `<div class="${cls.join(' ')}">
+    <div class="account-top">
+      <div class="account-name">${displayName} ${badges.join(' ')}</div>
+      <div class="account-actions">
+        ${switchBtn}
+        <button class="btn btn-sm btn-danger" onclick="confirmRemove('${a.name}','${displayName}')">删除</button>
+      </div>
+    </div>
+    ${emailLine}
+    ${u ? `<div class="usage-row">
+      ${renderUsage('5小时额度', u.five_hour, u.five_hour_resets_at)}
+      ${renderUsage('7天总额度', u.seven_day, u.seven_day_resets_at)}
+      ${renderUsage('7天 Sonnet', u.seven_day_sonnet, u.seven_day_sonnet_resets_at)}
+    </div>` : '<div style="color:var(--text-tertiary);font-size:12px;">暂无用量数据</div>'}
+    <div class="token-line">Token 有效期: 剩余 ${tokenH} 小时</div>
+  </div>`;
+}
+
+async function refreshData() {
+  try {
+    const [ar, lr] = await Promise.all([
+      fetch(API + '/api/accounts').then(r => r.json()),
+      fetch(API + '/api/alerts').then(r => r.json()),
+    ]);
+    if (ar.auto_switch !== undefined) {
+      autoSwitch = ar.auto_switch;
+      document.getElementById('auto-toggle').classList.toggle('on', autoSwitch);
+    }
+    const el = document.getElementById('accounts');
+    el.innerHTML = ar.accounts.length
+      ? ar.accounts.map(renderAccount).join('')
+      : '<div class="empty-state"><p>暂无账号</p><p>点击 <strong>+ 新增账号</strong> 添加你的第一个 Claude 账号</p></div>';
+
+    const al = document.getElementById('alerts');
+    al.innerHTML = lr.alerts.length
+      ? lr.alerts.slice().reverse().map(a =>
+        `<div class="alert-item">
+          <span class="alert-time">${a.time}</span>
+          <span class="alert-badge ${a.event}">${ALERT_LABELS[a.event] || a.event}</span>
+          <span class="alert-msg">${a.account} — 5h:${a.usage.five_hour ?? '?'}% S7d:${a.usage.seven_day_sonnet ?? '?'}%</span>
+        </div>`).join('')
+      : '<div class="alert-empty">暂无报警</div>';
+
+    document.getElementById('last-refresh').textContent = '上次刷新: ' + new Date().toLocaleTimeString();
+  } catch(e) { console.error(e); }
+}
+
+async function manualCheck() {
+  await fetch(API + '/api/check', { method: 'POST' });
+  refreshData();
+}
+
+function confirmSwitch(name, displayName) {
+  showConfirm(`确认将当前生效账号切换为「${displayName}」？<br><small style="color:var(--text-tertiary)">切换后新的请求将使用该账号的额度</small>`, () => doSwitch(name));
+}
+async function doSwitch(name) {
+  await fetch(API + '/api/switch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name}) });
+  refreshData();
+}
+
+function confirmRemove(name, displayName) {
+  showConfirm(`确认删除账号「${displayName}」？<br><small style="color:var(--danger)">此操作不可撤销，凭证文件将被永久删除</small>`, () => doRemove(name));
+}
+async function doRemove(name) {
+  await fetch(API + '/api/remove', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name}) });
+  refreshData();
+}
+
+function toggleAutoSwitch() {
+  autoSwitch = !autoSwitch;
+  document.getElementById('auto-toggle').classList.toggle('on', autoSwitch);
+  fetch(API + '/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({auto_switch: autoSwitch}) });
+}
+
+// ── 新增账号 ──
+let loginPoll = null;
+function showAddModal() {
+  document.getElementById('add-modal').classList.add('show');
+  document.getElementById('add-step-1').style.display = '';
+  document.getElementById('add-step-2').style.display = 'none';
+  document.getElementById('add-step-3').style.display = 'none';
+  document.getElementById('add-submit').style.display = '';
+  document.getElementById('add-name').value = '';
+  setTimeout(() => document.getElementById('add-name').focus(), 100);
+}
+function hideAddModal() {
+  document.getElementById('add-modal').classList.remove('show');
+  if (loginPoll) { clearInterval(loginPoll); loginPoll = null; }
+}
+let _currentLoginName = '';
+
+async function startLogin() {
+  const name = document.getElementById('add-name').value.trim();
+  if (!name) { alert('请输入账号名称'); return; }
+  _currentLoginName = name;
+  const res = await fetch(API + '/api/add/start', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({name}),
+  }).then(r => r.json());
+  if (res.error) { alert(res.error); return; }
+  document.getElementById('add-step-1').style.display = 'none';
+  document.getElementById('add-step-2').style.display = '';
+  document.getElementById('add-submit').style.display = 'none';
+  document.getElementById('login-code').value = '';
+
+  loginPoll = setInterval(async () => {
+    const st = await fetch(API + '/api/add/status').then(r => r.json());
+    const s = st.sessions[name];
+    if (!s) return;
+    if (s.url) document.getElementById('login-url').innerHTML = '<a href="'+s.url+'" target="_blank">'+s.url+'</a>';
+
+    const statusEl = document.getElementById('login-status');
+    if (s.status === 'success') {
+      clearInterval(loginPoll);
+      document.getElementById('add-step-2').style.display = 'none';
+      document.getElementById('add-step-3').style.display = '';
+      document.getElementById('add-result').innerHTML = '✓ 账号「'+name+'」添加成功！';
+      document.getElementById('add-result').style.color = 'var(--success)';
+      refreshData();
+    } else if (s.status === 'failed') {
+      clearInterval(loginPoll);
+      statusEl.textContent = '登录失败: ' + (s.error || '未知错误');
+      statusEl.style.color = 'var(--danger)';
+    } else if (s.status === 'code_submitted') {
+      statusEl.textContent = '登录码已提交，正在验证...';
+      statusEl.style.color = 'var(--accent)';
+    } else if (s.status === 'waiting_for_code') {
+      statusEl.textContent = '请打开上方链接授权，然后粘贴登录码';
+      statusEl.style.color = 'var(--text-secondary)';
+    } else {
+      statusEl.textContent = '正在启动登录流程...';
+    }
+  }, 2000);
+}
+
+async function submitCode() {
+  const code = document.getElementById('login-code').value.trim();
+  if (!code) { alert('请粘贴登录码'); return; }
+  const res = await fetch(API + '/api/add/code', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({name: _currentLoginName, code}),
+  }).then(r => r.json());
+  if (!res.ok) {
+    alert(res.error || '提交失败');
+    return;
+  }
+  document.getElementById('login-status').textContent = '登录码已提交，正在验证...';
+  document.getElementById('login-status').style.color = 'var(--accent)';
+}
+
+refreshData();
+setInterval(refreshData, 30000);
+</script>
+</body>
+</html>

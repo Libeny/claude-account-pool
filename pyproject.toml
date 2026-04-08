@@ -1,0 +1,15 @@
+[project]
+name = "claude-account-pool"
+version = "0.1.0"
+description = "Multi-account pool manager for Claude Code"
+requires-python = ">=3.10"
+
+[project.scripts]
+cap = "cap.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["cap*"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
